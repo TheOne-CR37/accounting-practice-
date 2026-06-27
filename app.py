@@ -83,6 +83,8 @@ st.markdown("""
 BASE_DIR = Path(__file__).parent
 QUESTIONS_FILE = BASE_DIR / "questions.json"
 RECORDS_FILE = BASE_DIR / "records.json"
+BOOKMARKS_FILE = BASE_DIR / "bookmarks.json"
+MASTERY_FILE = BASE_DIR / "mastery.json"
 
 # ============================================================
 # 题型映射 & 分值
@@ -143,6 +145,87 @@ def add_record(q_id, q_type, user_answer, correct_answer, is_correct, self_eval=
     }
     st.session_state.records.append(rec)
     save_records(st.session_state.records)
+    # update mastery
+    _update_mastery(q_id, is_correct)
+
+
+# ---- 收藏夹 ----
+def load_bookmarks():
+    if os.path.exists(BOOKMARKS_FILE):
+        with open(BOOKMARKS_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    return []
+
+
+def save_bookmarks(bm):
+    with open(BOOKMARKS_FILE, "w", encoding="utf-8") as f:
+        json.dump(bm, f, ensure_ascii=False, indent=2)
+
+
+def toggle_bookmark(q_id):
+    if q_id in st.session_state.bookmarks:
+        st.session_state.bookmarks.remove(q_id)
+    else:
+        st.session_state.bookmarks.append(q_id)
+    save_bookmarks(st.session_state.bookmarks)
+
+
+# ---- 掌握度追踪（连续做对 2 次才从错题本移除） ----
+def load_mastery():
+    if os.path.exists(MASTERY_FILE):
+        with open(MASTERY_FILE, "r", encoding="utf-8") as f:
+            return {int(k): v for k, v in json.load(f).items()}
+    return {}
+
+
+def save_mastery(m):
+    with open(MASTERY_FILE, "w", encoding="utf-8") as f:
+        json.dump({str(k): v for k, v in m.items()}, f, ensure_ascii=False, indent=2)
+
+
+def _update_mastery(q_id, is_correct):
+    """每次作答后更新掌握度：做对+1，做错清零"""
+    m = st.session_state.err_mastery
+    if is_correct:
+        m[q_id] = m.get(q_id, 0) + 1
+    else:
+        m[q_id] = 0
+    save_mastery(m)
+
+
+# ---- 核算题答案折叠 ----
+import re
+
+
+def collapsible_answer(answer_text, prefix="ans"):
+    """将长答案按 ①/（1）/1）/步骤 分段折叠展示"""
+    if not answer_text:
+        st.markdown("暂无参考答案")
+        return
+    # 按明显的分段标记切分
+    pattern = r"(?=(?:^|\n)\s*(?:[①②③④⑤⑥⑦⑧⑨⑩]|\(\d+\)|\d+\s*[）\)]|（\d+）))"
+    parts = re.split(pattern, answer_text, flags=re.MULTILINE)
+    # 过滤空段
+    parts = [p.strip() for p in parts if p.strip()]
+    if len(parts) <= 1:
+        # 尝试按空行分段
+        parts = [p.strip() for p in re.split(r"\n{2,}", answer_text) if p.strip()]
+    if len(parts) <= 1:
+        st.markdown(answer_text)
+        return
+    # 超过 3 段才折叠，否则直接展示
+    if len(parts) <= 3:
+        for p in parts:
+            st.markdown(p)
+        return
+    # 折叠展示：前 2 段展开，其余折叠
+    for i, p in enumerate(parts):
+        if i < 2:
+            st.markdown(p)
+        else:
+            title = p.split("\n")[0][:40] if p else f"步骤 {i+1}"
+            with st.expander(f"📋 {title}…", expanded=False):
+                st.markdown(p)
 
 
 # ============================================================
@@ -178,10 +261,12 @@ def init_session():
     defaults = {
         "page": "随机刷题",
         "records": [],
+        "bookmarks": [],
+        "err_mastery": {},
         # --- 随机刷题 ---
         "rand_source": "全部",
         "rand_key_only": False,
-        "rand_types": list(TYPE_LABELS.keys()),  # 题型筛选
+        "rand_types": list(TYPE_LABELS.keys()),
         "rand_q": None,
         "rand_display_opts": [],
         "rand_new2orig": {},
@@ -191,6 +276,7 @@ def init_session():
         "rand_self_done": False,
         "rand_need_new": True,
         # --- 模拟考试 ---
+        "exam_source": "全部",
         "exam_in_progress": False,
         "exam_questions": [],
         "exam_display_opts": {},
@@ -213,25 +299,34 @@ def init_session():
         "err_correct": None,
         "err_self_done": False,
         "err_need_new": True,
+        "err_source": "全部",
+        "err_types": list(TYPE_LABELS.keys()),
     }
     for k, v in defaults.items():
         if k not in st.session_state:
             st.session_state[k] = v
     if not st.session_state.records:
         st.session_state.records = load_records()
+    if not st.session_state.bookmarks:
+        st.session_state.bookmarks = load_bookmarks()
+    if not st.session_state.err_mastery:
+        st.session_state.err_mastery = load_mastery()
 
 
 # ============================================================
 # 辅助函数
 # ============================================================
 def get_wrong_ids():
+    """错题 = 历史有错误记录 且 尚未掌握（连续正确 < 2 次）"""
     seen = set()
     wrong = []
     for r in st.session_state.records:
         if not r["is_correct"] and r["question_id"] not in seen:
             wrong.append(r["question_id"])
             seen.add(r["question_id"])
-    return wrong
+    # 过滤已掌握的（连续做对 >= 2 次）
+    mastery = st.session_state.get("err_mastery", {})
+    return [w for w in wrong if mastery.get(w, 0) < 2]
 
 
 def type_badge(q_type):
@@ -374,10 +469,11 @@ def page_random_practice():
     # ---- 题目卡片 ----
     kp = key_badge(q.get("key_point", False))
     src = source_badge(q.get("source", "—"))
+    bm = "⭐" if q["id"] in st.session_state.bookmarks else ""
     st.markdown(
         f'<div class="question-card">'
         f'<p style="color:#888;font-size:0.85em;margin-bottom:6px;">'
-        f'{type_badge(q_type)} &nbsp; {src} &nbsp; {kp} &nbsp; | &nbsp; 题号 #{q["id"]} &nbsp; | &nbsp; 候选池 {len(pool)} 题</p>'
+        f'{type_badge(q_type)} &nbsp; {src} &nbsp; {kp} &nbsp; {bm} &nbsp; | &nbsp; 题号 #{q["id"]} &nbsp; | &nbsp; 候选池 {len(pool)} 题</p>'
         f'<h4>{q["question"]}</h4>',
         unsafe_allow_html=True
     )
@@ -436,8 +532,8 @@ def page_random_practice():
 
         # 主观题自评
         if q_type in SUBJECTIVE_TYPES:
-            with st.expander("🔑 参考答案", expanded=True):
-                st.markdown(q.get("answer", "暂无参考答案"))
+            st.markdown("**参考答案：**")
+            collapsible_answer(q.get("answer", "暂无参考答案"), f"rand_ans_{q['id']}")
             if q.get("explanation"):
                 with st.expander("📖 解析"):
                     st.markdown(q["explanation"])
@@ -466,12 +562,10 @@ def page_random_practice():
                 st.session_state.rand_need_new = True
                 st.rerun()
         with c2:
-            wrong_ids = get_wrong_ids()
-            in_wrong = q["id"] in wrong_ids
-            lbl = "🔖 已收藏" if in_wrong else "📎 加入错题"
+            is_bm = q["id"] in st.session_state.bookmarks
+            lbl = "⭐ 已收藏" if is_bm else "☆ 收藏"
             if st.button(lbl, use_container_width=True, key="rand_bookmark"):
-                if not in_wrong:
-                    add_record(q["id"], q_type, "_bookmark_", q.get("answer", ""), False, self_eval=False)
+                toggle_bookmark(q["id"])
                 st.rerun()
 
 
@@ -505,8 +599,17 @@ def page_mock_exam():
             </div>
             """, unsafe_allow_html=True)
 
+        # 来源筛选
+        sources = sorted({q.get("source", "—") for q in questions})
+        col_src, _ = st.columns([1, 2])
+        with col_src:
+            exam_src = st.selectbox("📂 考试范围", ["全部"] + sources, key="exam_source_sel")
+            st.session_state.exam_source = exam_src
+
         for t, cfg in EXAM_CONFIG.items():
-            available = len([q for q in questions if q["type"] == t])
+            pool = [q for q in questions if q["type"] == t
+                    and (exam_src == "全部" or q.get("source") == exam_src)]
+            available = len(pool)
             if available < cfg["count"]:
                 st.warning(f"⚠️ 「{TYPE_LABELS[t]}」题库不足（需 {cfg['count']}，现有 {available}），将全部抽取。")
 
@@ -521,9 +624,11 @@ def page_mock_exam():
 
 
 def start_exam(questions):
+    exam_src = st.session_state.get("exam_source", "全部")
     selected = []
     for q_type, cfg in EXAM_CONFIG.items():
-        pool = [q for q in questions if q["type"] == q_type]
+        pool = [q for q in questions if q["type"] == q_type
+                and (exam_src == "全部" or q.get("source") == exam_src)]
         n = min(cfg["count"], len(pool))
         selected.extend(random.sample(pool, n))
     random.shuffle(selected)
@@ -667,7 +772,7 @@ def show_exam_result():
             st.markdown("</div>", unsafe_allow_html=True)
 
             with st.expander("🔑 参考答案", expanded=True):
-                st.markdown(sq.get("answer", "暂无"))
+                collapsible_answer(sq.get("answer", "暂无"), f"ev_ans_{sq['id']}")
             if sq.get("explanation"):
                 with st.expander("📖 解析"):
                     st.markdown(sq["explanation"])
@@ -755,13 +860,50 @@ def page_error_book():
     st.title("📕 错题本")
     questions = load_questions()
     q_map = {q["id"]: q for q in questions}
-    wrong_ids = get_wrong_ids()
+    all_wrong_ids = get_wrong_ids()
+    sources = sorted({q_map.get(w, {}).get("source", "—") for w in all_wrong_ids if w in q_map})
 
-    if not wrong_ids:
-        st.success("🎉 错题本空空如也，继续保持！")
+    # ---- 侧边栏筛选 ----
+    with st.sidebar:
+        st.markdown("### 🔍 错题筛选")
+        new_err_source = st.selectbox("来源", ["全部"] + sources, key="err_source_sel")
+        type_options = list(TYPE_LABELS.keys())
+        type_labels_display = [f"{TYPE_ICONS[t]} {TYPE_LABELS[t]}" for t in type_options]
+        sel = st.multiselect(
+            "题型", type_labels_display,
+            default=[f"{TYPE_ICONS[t]} {TYPE_LABELS[t]}" for t in st.session_state.err_types],
+            key="err_types_sel"
+        )
+        new_err_types = [type_options[type_labels_display.index(l)] for l in sel] if sel else list(TYPE_LABELS.keys())
+
+        if new_err_source != st.session_state.err_source or new_err_types != st.session_state.err_types:
+            st.session_state.err_source = new_err_source
+            st.session_state.err_types = new_err_types
+            st.session_state.err_need_new = True
+            st.rerun()
+
+        # 掌握度统计
+        mastery = st.session_state.err_mastery
+        mastered = sum(1 for w in all_wrong_ids if mastery.get(w, 0) >= 2)
+        st.divider()
+        st.metric("已掌握", mastered)
+        st.metric("待复习", len(all_wrong_ids))
+
+    # 按筛选条件过滤
+    wrong_ids = [w for w in all_wrong_ids
+                 if w in q_map
+                 and (st.session_state.err_source == "全部" or q_map[w].get("source") == st.session_state.err_source)
+                 and q_map[w]["type"] in st.session_state.err_types]
+
+    if not all_wrong_ids:
+        st.success("🎉 没有尚未掌握的错题，继续保持！")
         return
 
-    st.markdown(f"共 **{len(wrong_ids)}** 道错题待复习")
+    if not wrong_ids:
+        st.info("当前筛选条件下暂无错题。")
+        return
+
+    st.markdown(f"待复习 **{len(wrong_ids)}** 道（共 {len(all_wrong_ids)} 道）")
 
     if st.session_state.err_need_new:
         st.session_state.err_idx = 0
@@ -780,7 +922,7 @@ def page_error_book():
 
     idx = st.session_state.err_idx
     if idx >= len(wrong_ids):
-        st.success("🎉 已复习完所有错题！")
+        st.success("🎉 当前筛选下已复习完所有错题！")
         if st.button("🔁 重新开始", use_container_width=True):
             st.session_state.err_idx = 0
             st.session_state.err_need_new = True
@@ -794,7 +936,10 @@ def page_error_book():
         st.rerun()
 
     q_type = q["type"]
-    st.progress((idx + 1) / len(wrong_ids), text=f"错题 {idx+1}/{len(wrong_ids)}  |  {TYPE_LABELS.get(q_type, q_type)}")
+    mc = mastery.get(qid, 0)
+
+    st.progress((idx + 1) / len(wrong_ids),
+                text=f"错题 {idx+1}/{len(wrong_ids)} | {TYPE_LABELS.get(q_type, q_type)} | 连续正确 {mc}/2")
 
     # 打乱选项
     if q_type in OBJECTIVE_TYPES and not st.session_state.err_display_opts:
@@ -805,9 +950,10 @@ def page_error_book():
     # 题目卡片
     kp = key_badge(q.get("key_point", False))
     src = source_badge(q.get("source", "—"))
+    bm = "⭐" if qid in st.session_state.bookmarks else ""
     st.markdown(
         f'<div class="question-card">'
-        f'<p style="color:#888;font-size:0.85em;">{type_badge(q_type)} &nbsp; {src} &nbsp; {kp} &nbsp;|&nbsp; 题号 #{q["id"]}</p>'
+        f'<p style="color:#888;font-size:0.85em;">{type_badge(q_type)} &nbsp; {src} &nbsp; {kp} &nbsp; {bm} &nbsp;|&nbsp; 题号 #{q["id"]}</p>'
         f'<h4>{q["question"]}</h4>',
         unsafe_allow_html=True
     )
@@ -821,35 +967,46 @@ def page_error_book():
         st.markdown("</div>", unsafe_allow_html=True)
 
         st.divider()
-        if st.button("✅ 提交", type="primary", use_container_width=True, key="err_submit_btn"):
-            ua = st.session_state.get("err_user_ans", "")
-            if q_type in OBJECTIVE_TYPES:
-                if not ua or not ua.strip():
-                    st.warning("请先作答。")
-                    st.stop()
-                mapped = map_answer_back(ua, st.session_state.err_new2orig)
-                correct = q["answer"].strip().upper()
-                st.session_state.err_correct = (mapped == correct)
-                add_record(q["id"], q_type, mapped, correct, st.session_state.err_correct)
-            else:
-                st.session_state.err_correct = None
-            st.session_state.err_submitted = True
-            st.rerun()
+        c1, c2, c3 = st.columns([1, 1, 2])
+        with c1:
+            if st.button("✅ 提交", type="primary", use_container_width=True, key="err_submit_btn"):
+                ua = st.session_state.get("err_user_ans", "")
+                if q_type in OBJECTIVE_TYPES:
+                    if not ua or not ua.strip():
+                        st.warning("请先作答。")
+                        st.stop()
+                    mapped = map_answer_back(ua, st.session_state.err_new2orig)
+                    correct = q["answer"].strip().upper()
+                    st.session_state.err_correct = (mapped == correct)
+                    add_record(q["id"], q_type, mapped, correct, st.session_state.err_correct)
+                else:
+                    st.session_state.err_correct = None
+                st.session_state.err_submitted = True
+                st.rerun()
+        with c2:
+            lbl = "⭐ 已收藏" if qid in st.session_state.bookmarks else "☆ 收藏"
+            if st.button(lbl, use_container_width=True, key="err_bm_btn"):
+                toggle_bookmark(qid)
+                st.rerun()
     else:
         st.markdown("</div>", unsafe_allow_html=True)
 
         if q_type in OBJECTIVE_TYPES:
             if st.session_state.err_correct:
-                st.markdown('<div class="result-correct"><b>✅ 这次做对了！已从错题本移除。</b></div>', unsafe_allow_html=True)
+                new_mc = st.session_state.err_mastery.get(qid, 0)
+                if new_mc >= 2:
+                    st.markdown(f'<div class="result-correct"><b>✅ 连续正确 {new_mc} 次，已掌握！从错题本移除。</b></div>', unsafe_allow_html=True)
+                else:
+                    st.markdown(f'<div class="result-correct"><b>✅ 做对了！连续正确 {new_mc}/2 次</b> — 再对 1 次即可移除</div>', unsafe_allow_html=True)
             else:
-                st.markdown('<div class="result-wrong"><b>❌ 仍然错误，继续加油！</b></div>', unsafe_allow_html=True)
+                st.markdown(f'<div class="result-wrong"><b>❌ 仍然错误，继续加油！</b>（连续正确清零）</div>', unsafe_allow_html=True)
                 st.markdown(f"**你的答案：** {st.session_state.get('err_user_ans', '')}　　**正确答案：** {q['answer']}")
         else:
             st.markdown('<div class="info-card"><b>📝 核算题</b> — 请自评</div>', unsafe_allow_html=True)
-            with st.expander("🔑 参考答案", expanded=True):
-                st.markdown(q.get("answer", "暂无"))
+            st.markdown("**参考答案：**")
+            collapsible_answer(q.get("answer", "暂无"), f"err_ans_{qid}")
             if not st.session_state.err_self_done:
-                c1, c2 = st.columns(2)
+                c1, c2, c3 = st.columns(3)
                 with c1:
                     if st.button("✅ 做对了", type="primary", key="err_self_r", use_container_width=True):
                         add_record(q["id"], q_type, st.session_state.get("err_user_ans_text", ""),
@@ -870,16 +1027,74 @@ def page_error_book():
                 st.markdown(q["explanation"])
 
         st.divider()
-        if st.button("➡️ 下一题", type="primary", use_container_width=True, key="err_next"):
-            st.session_state.err_idx += 1
-            st.session_state.err_q = None
-            st.session_state.err_display_opts = []
-            st.session_state.err_new2orig = {}
-            st.session_state.err_user_ans = None
-            st.session_state.err_submitted = False
-            st.session_state.err_correct = None
-            st.session_state.err_self_done = False
-            st.rerun()
+        c1, c2 = st.columns([1, 3])
+        with c1:
+            if st.button("➡️ 下一题", type="primary", use_container_width=True, key="err_next"):
+                st.session_state.err_idx += 1
+                st.session_state.err_q = None
+                st.session_state.err_display_opts = []
+                st.session_state.err_new2orig = {}
+                st.session_state.err_user_ans = None
+                st.session_state.err_submitted = False
+                st.session_state.err_correct = None
+                st.session_state.err_self_done = False
+                st.rerun()
+
+
+# ============================================================
+# 页面：收藏夹
+# ============================================================
+def page_bookmarks():
+    st.title("📌 收藏夹")
+    questions = load_questions()
+    q_map = {q["id"]: q for q in questions}
+    bm_ids = st.session_state.bookmarks
+
+    if not bm_ids:
+        st.info("暂无收藏，在刷题/错题本中点击 ☆ 收藏 即可添加。")
+        return
+
+    # 筛选
+    bm_qs = [q_map[w] for w in bm_ids if w in q_map]
+    sources = sorted({q.get("source", "—") for q in bm_qs})
+    with st.sidebar:
+        st.markdown("### 🔍 收藏筛选")
+        filter_src = st.selectbox("来源", ["全部"] + sources, key="bm_source")
+        type_options = list(TYPE_LABELS.keys())
+        type_labels_display = [f"{TYPE_ICONS[t]} {TYPE_LABELS[t]}" for t in type_options]
+        sel = st.multiselect("题型", type_labels_display, default=type_labels_display, key="bm_types")
+        filter_types = [type_options[type_labels_display.index(l)] for l in sel] if sel else list(TYPE_LABELS.keys())
+
+    filtered = [q for q in bm_qs
+                if (filter_src == "全部" or q.get("source") == filter_src)
+                and q["type"] in filter_types]
+
+    st.markdown(f"共收藏 **{len(bm_ids)}** 题，当前显示 **{len(filtered)}** 题")
+
+    for q in filtered:
+        kp = key_badge(q.get("key_point", False))
+        src = source_badge(q.get("source", "—"))
+        with st.container():
+            st.markdown(
+                f'<div class="question-card">'
+                f'<p style="color:#888;font-size:0.85em;">{type_badge(q["type"])} &nbsp; {src} &nbsp; {kp} &nbsp;|&nbsp; 题号 #{q["id"]} &nbsp;|&nbsp; 连续正确 {st.session_state.err_mastery.get(q["id"], 0)}/2</p>'
+                f'<h4>{q["question"]}</h4>',
+                unsafe_allow_html=True
+            )
+            # 答案
+            if q["type"] in SUBJECTIVE_TYPES:
+                with st.expander("🔑 参考答案"):
+                    collapsible_answer(q.get("answer", ""), f"bm_ans_{q['id']}")
+            else:
+                st.markdown(f"**答案：** {q.get('answer', '')}")
+                if q.get("explanation"):
+                    with st.expander("📖 解析"):
+                        st.markdown(q["explanation"])
+            # 取消收藏
+            if st.button("取消收藏", key=f"bm_rm_{q['id']}"):
+                toggle_bookmark(q["id"])
+                st.rerun()
+            st.markdown("</div>", unsafe_allow_html=True)
 
 
 # ============================================================
@@ -965,8 +1180,8 @@ def main():
         st.caption("中级财务会计 · 备考刷题系统")
         st.divider()
 
-        pages = ["🎲 随机刷题", "📝 模拟考试", "📕 错题本", "📈 学习统计"]
-        page_labels = ["随机刷题", "模拟考试", "错题本", "学习统计"]
+        pages = ["🎲 随机刷题", "📝 模拟考试", "📕 错题本", "📌 收藏夹", "📈 学习统计"]
+        page_labels = ["随机刷题", "模拟考试", "错题本", "收藏夹", "学习统计"]
         default_idx = page_labels.index(st.session_state.page) if st.session_state.page in page_labels else 0
         selected = st.radio("", pages, index=default_idx, label_visibility="visible")
         new_page = page_labels[pages.index(selected)]
@@ -979,12 +1194,14 @@ def main():
         records_count = len(st.session_state.records)
         st.caption(f"📦 题库：{questions_count} 题  ·  📋 记录：{records_count} 条")
         wrong_count = len(get_wrong_ids())
-        st.caption(f"📕 错题：{wrong_count} 道")
+        bm_count = len(st.session_state.bookmarks)
+        st.caption(f"📕 错题：{wrong_count} 道  ·  ⭐ 收藏：{bm_count} 题")
 
     page_map = {
         "随机刷题": page_random_practice,
         "模拟考试": page_mock_exam,
         "错题本": page_error_book,
+        "收藏夹": page_bookmarks,
         "学习统计": page_statistics,
     }
     page_map[st.session_state.page]()
