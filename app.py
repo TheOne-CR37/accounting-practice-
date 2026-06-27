@@ -21,59 +21,98 @@ st.set_page_config(page_title="中级财务会计刷题", page_icon="📚", layo
 # ============================================================
 st.markdown("""
 <style>
+    /* ---- Notion-style global overrides ---- */
+    html, body, [data-testid="stAppViewContainer"] {
+        background: #FFFDF9;
+    }
+    h1,h2,h3,h4,h5,h6,p,li,label,span,div {
+        color: #37352F;
+    }
+    /* 超薄边框 */
+    hr, .stDivider { border-color: rgba(55,53,47,0.08); }
+
+    /* ---- 题目卡片 ---- */
     .question-card {
-        background: #f8f9fa;
-        border-radius: 12px;
+        background: #FFFFFF;
+        border-radius: 6px;
         padding: 24px;
         margin: 16px 0;
-        border-left: 4px solid #4A90D9;
+        border: 1px solid rgba(55,53,47,0.08);
+        box-shadow: 0 1px 3px rgba(15,15,15,0.04);
     }
+    /* ---- 结果卡片 ---- */
     .result-correct {
-        background: #d4edda;
-        border-radius: 10px;
+        background: rgba(15,123,78,0.06);
+        border-radius: 6px;
         padding: 16px;
-        border: 1px solid #c3e6cb;
+        border: 1px solid rgba(15,123,78,0.12);
+        color: #37352F;
     }
     .result-wrong {
-        background: #f8d7da;
-        border-radius: 10px;
+        background: rgba(224,62,62,0.06);
+        border-radius: 6px;
         padding: 16px;
-        border: 1px solid #f5c6cb;
+        border: 1px solid rgba(224,62,62,0.12);
+        color: #37352F;
     }
     .info-card {
-        background: #e7f3ff;
-        border-radius: 10px;
+        background: rgba(35,131,226,0.06);
+        border-radius: 6px;
         padding: 16px;
-        border: 1px solid #b8daff;
+        border: 1px solid rgba(35,131,226,0.10);
     }
+    /* ---- 侧边栏指标 ---- */
     .sidebar-metric {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        border-radius: 10px;
-        padding: 12px;
-        color: white;
+        background: #2383E2;
+        border-radius: 6px;
+        padding: 16px;
+        color: #FFFFFF;
         text-align: center;
         margin: 8px 0;
     }
+    /* ---- 题型徽章 ---- */
     .type-badge {
         display: inline-block;
         padding: 2px 10px;
-        border-radius: 12px;
-        font-size: 0.85em;
+        border-radius: 4px;
+        font-size: 0.82em;
         font-weight: 500;
     }
-    .badge-obj { background: #e3f2fd; color: #1565c0; }
-    .badge-sub { background: #fff3e0; color: #e65100; }
+    .badge-obj { background: rgba(35,131,226,0.08); color: #2383E2; }
+    .badge-sub { background: rgba(217,115,13,0.08); color: #D9730D; }
+    /* ---- 重点标记 ---- */
     .badge-key {
         display: inline-block;
-        background: #ff4757;
-        color: white;
+        background: rgba(224,62,62,0.08);
+        color: #D93B3B;
         padding: 1px 8px;
-        border-radius: 10px;
+        border-radius: 4px;
         font-size: 0.75em;
         font-weight: 600;
     }
+    /* ---- Steamlit 控件微调 ---- */
     .stRadio > div { gap: 6px; }
-    .stCheckbox > label { font-size: 1rem; }
+    .stCheckbox > label { font-size: 1rem; color: #37352F; }
+    /* ---- 按钮 ---- */
+    .stButton > button {
+        border-radius: 6px;
+        font-weight: 500;
+        transition: all 0.15s ease;
+    }
+    /* primary 按钮用 Notion 蓝 */
+    .stButton > button[kind="primary"] {
+        background: #2383E2;
+        border-color: #2383E2;
+    }
+    /* ---- 进度条 ---- */
+    .stProgress > div > div > div {
+        background: #2383E2;
+    }
+    /* ---- 输入框 ---- */
+    textarea, input, select {
+        border: 1px solid rgba(55,53,47,0.12) !important;
+        border-radius: 6px !important;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -343,11 +382,11 @@ def key_badge(is_key):
 
 
 def source_badge(source):
-    """来源标签：对章节显示蓝色，模拟卷显示绿色"""
+    """来源标签：章节暖灰，模拟卷暖绿"""
     if "模拟" in source:
-        return f'<span style="background:#e8f5e9;color:#2e7d32;padding:2px 8px;border-radius:10px;font-size:0.85em;">📋 {source}</span>'
+        return f'<span style="background:rgba(15,123,78,0.07);color:#0F7B4E;padding:2px 8px;border-radius:4px;font-size:0.82em;">📋 {source}</span>'
     else:
-        return f'<span style="background:#e3f2fd;color:#1565c0;padding:2px 8px;border-radius:10px;font-size:0.85em;">📖 {source}</span>'
+        return f'<span style="background:rgba(55,53,47,0.04);color:#6B6966;padding:2px 8px;border-radius:4px;font-size:0.82em;">📖 {source}</span>'
 
 
 # ============================================================
@@ -473,7 +512,7 @@ def page_random_practice():
     bm = "⭐" if q["id"] in st.session_state.bookmarks else ""
     st.markdown(
         f'<div class="question-card">'
-        f'<p style="color:#888;font-size:0.85em;margin-bottom:6px;">'
+        f'<p style="color:#9B9A97;font-size:0.85em;margin-bottom:6px;">'
         f'{type_badge(q_type)} &nbsp; {src} &nbsp; {kp} &nbsp; {bm} &nbsp; | &nbsp; 题号 #{q["id"]} &nbsp; | &nbsp; 候选池 {len(pool)} 题</p>'
         f'<h4>{q["question"]}</h4>',
         unsafe_allow_html=True
@@ -591,12 +630,12 @@ def page_mock_exam():
             """)
         with col_b:
             st.markdown(f"""
-            <div style="background:#f0f4ff;border-radius:12px;padding:20px;text-align:center;">
-            <h1 style="color:#4A90D9;">105</h1>
-            <p>总 分</p>
-            <hr>
-            <p>⏱ <b>90 分钟</b></p>
-            <p style="font-size:0.8em;color:#888;">客观题自动判分<br>核算题交卷后自评</p>
+            <div style="background:#FFFFFF;border-radius:6px;padding:24px;text-align:center;border:1px solid rgba(55,53,47,0.08);box-shadow:0 1px 3px rgba(15,15,15,0.04);">
+            <h1 style="color:#2383E2;margin-bottom:0;">105</h1>
+            <p style="color:#9B9A97;margin-top:4px;">总 分</p>
+            <hr style="border-color:rgba(55,53,47,0.06);">
+            <p style="color:#37352F;">⏱ <b>90 分钟</b></p>
+            <p style="font-size:0.8em;color:#9B9A97;">客观题自动判分<br>核算题交卷后自评</p>
             </div>
             """, unsafe_allow_html=True)
 
@@ -821,7 +860,7 @@ def show_exam_result():
         with col2:
             st.metric("核算题自评", f"{subj_score}/{max_subj}", f"{subj_correct}/{subj_total} 道正确")
         with col3:
-            color = "green" if pct >= 60 else "red"
+            color = "#0F7B4E" if pct >= 60 else "#D93B3B"
             st.markdown(f"<h1 style='text-align:center;color:{color};'>{pct:.0f}<small style='font-size:0.4em;'>%</small></h1>", unsafe_allow_html=True)
             st.markdown(f"<p style='text-align:center;'>{total_score}/{max_score}</p>", unsafe_allow_html=True)
 
@@ -954,7 +993,7 @@ def page_error_book():
     bm = "⭐" if qid in st.session_state.bookmarks else ""
     st.markdown(
         f'<div class="question-card">'
-        f'<p style="color:#888;font-size:0.85em;">{type_badge(q_type)} &nbsp; {src} &nbsp; {kp} &nbsp; {bm} &nbsp;|&nbsp; 题号 #{q["id"]}</p>'
+        f'<p style="color:#9B9A97;font-size:0.85em;">{type_badge(q_type)} &nbsp; {src} &nbsp; {kp} &nbsp; {bm} &nbsp;|&nbsp; 题号 #{q["id"]}</p>'
         f'<h4>{q["question"]}</h4>',
         unsafe_allow_html=True
     )
@@ -1078,7 +1117,7 @@ def page_bookmarks():
         with st.container():
             st.markdown(
                 f'<div class="question-card">'
-                f'<p style="color:#888;font-size:0.85em;">{type_badge(q["type"])} &nbsp; {src} &nbsp; {kp} &nbsp;|&nbsp; 题号 #{q["id"]} &nbsp;|&nbsp; 连续正确 {st.session_state.err_mastery.get(q["id"], 0)}/2</p>'
+                f'<p style="color:#9B9A97;font-size:0.85em;">{type_badge(q["type"])} &nbsp; {src} &nbsp; {kp} &nbsp;|&nbsp; 题号 #{q["id"]} &nbsp;|&nbsp; 连续正确 {st.session_state.err_mastery.get(q["id"], 0)}/2</p>'
                 f'<h4>{q["question"]}</h4>',
                 unsafe_allow_html=True
             )
