@@ -329,6 +329,7 @@ def init_session():
         "exam_self_eval_idx": 0,
         "exam_self_evals": {},
         "exam_self_done": False,
+        "_wrong_ids_cache": (None, []),
         # --- 错题本 ---
         "err_idx": 0,
         "err_q": None,
@@ -356,17 +357,33 @@ def init_session():
 # ============================================================
 # 辅助函数
 # ============================================================
+def normalize_answer(ans):
+    """安全获取标准化的答案字符串（兼容 list 和 str）"""
+    if isinstance(ans, list):
+        return "".join(sorted(ans))
+    if ans is None:
+        return ""
+    return str(ans).strip().upper()
+
+
 def get_wrong_ids():
-    """错题 = 历史有错误记录 且 尚未掌握（连续正确 < 2 次）"""
+    """错题 = 历史有错误记录 且 尚未掌握（连续正确 < 2 次）
+    结果缓存于 session_state._wrong_ids_cache，records 或 mastery 变化时重建。"""
+    # 用 records 条数 + mastery 内容哈希做版本标记
+    ver = (len(st.session_state.records), hash(frozenset(st.session_state.err_mastery.items())))
+    cached = st.session_state.get("_wrong_ids_cache")
+    if cached and cached[0] == ver:
+        return cached[1]
     seen = set()
     wrong = []
     for r in st.session_state.records:
         if not r["is_correct"] and r["question_id"] not in seen:
             wrong.append(r["question_id"])
             seen.add(r["question_id"])
-    # 过滤已掌握的（连续做对 >= 2 次）
-    mastery = st.session_state.get("err_mastery", {})
-    return [w for w in wrong if mastery.get(w, 0) < 2]
+    mastery = st.session_state.err_mastery
+    result = [w for w in wrong if mastery.get(w, 0) < 2]
+    st.session_state._wrong_ids_cache = (ver, result)
+    return result
 
 
 def type_badge(q_type):
@@ -491,7 +508,7 @@ def page_random_practice():
         st.session_state.rand_correct = None
         st.session_state.rand_self_done = False
         st.session_state.rand_need_new = False
-        if q["type"] in OBJECTIVE_TYPES:
+        if q["type"] in ("single_choice", "multi_choice"):
             d, m = shuffle_options(q.get("options", []))
             st.session_state.rand_display_opts = d
             st.session_state.rand_new2orig = m
@@ -539,7 +556,7 @@ def page_random_practice():
                         st.warning("请先选择答案。")
                         st.stop()
                     mapped = map_answer_back(ua, st.session_state.rand_new2orig)
-                    correct_ans = q["answer"].strip().upper()
+                    correct_ans = normalize_answer(q["answer"])
                     is_correct = (mapped == correct_ans)
                     st.session_state.rand_correct = is_correct
                     add_record(q["id"], q_type, mapped, correct_ans, is_correct)
@@ -675,7 +692,7 @@ def start_exam(questions):
 
     display_opts, new2orig_map = {}, {}
     for q in selected:
-        if q["type"] in OBJECTIVE_TYPES:
+        if q["type"] in ("single_choice", "multi_choice"):
             d, m = shuffle_options(q.get("options", []))
             display_opts[q["id"]] = d
             new2orig_map[q["id"]] = m
@@ -778,7 +795,7 @@ def submit_exam():
         ua = (st.session_state.get(ans_key, "") or "").strip()
         n2o = st.session_state.exam_new2orig.get(q["id"], {})
         mapped = map_answer_back(ua, n2o)
-        correct = q["answer"].strip().upper()
+        correct = normalize_answer(q["answer"])
         is_correct = (mapped == correct)
         if is_correct:
             st.session_state.exam_obj_score += EXAM_CONFIG[q["type"]]["score"]
@@ -872,7 +889,7 @@ def show_exam_result():
             ua = st.session_state.get(ans_key, "")
             icon = "✅" if (
                 q["type"] in OBJECTIVE_TYPES and
-                map_answer_back(ua.strip(), st.session_state.exam_new2orig.get(q["id"], {})) == q["answer"].strip().upper()
+                map_answer_back(ua.strip(), st.session_state.exam_new2orig.get(q["id"], {})) == normalize_answer(q["answer"])
             ) or st.session_state.exam_self_evals.get(q["id"], False) else "❌"
             with st.expander(f"{icon} 第{i+1}题 — {TYPE_LABELS.get(q['type'], q['type'])} — {q['question'][:30]}..."):
                 st.markdown(f"**题目：** {q['question']}")
@@ -982,7 +999,7 @@ def page_error_book():
                 text=f"错题 {idx+1}/{len(wrong_ids)} | {TYPE_LABELS.get(q_type, q_type)} | 连续正确 {mc}/2")
 
     # 打乱选项
-    if q_type in OBJECTIVE_TYPES and not st.session_state.err_display_opts:
+    if q_type in ("single_choice", "multi_choice") and not st.session_state.err_display_opts:
         d, m = shuffle_options(q.get("options", []))
         st.session_state.err_display_opts = d
         st.session_state.err_new2orig = m
@@ -1016,7 +1033,7 @@ def page_error_book():
                         st.warning("请先作答。")
                         st.stop()
                     mapped = map_answer_back(ua, st.session_state.err_new2orig)
-                    correct = q["answer"].strip().upper()
+                    correct = normalize_answer(q["answer"])
                     st.session_state.err_correct = (mapped == correct)
                     add_record(q["id"], q_type, mapped, correct, st.session_state.err_correct)
                 else:
