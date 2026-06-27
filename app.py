@@ -115,8 +115,9 @@ EXAM_CONFIG = {
 # ============================================================
 # 数据加载与保存
 # ============================================================
-@st.cache_data
+@st.cache_data(ttl=600)
 def load_questions():
+    """加载题库，缓存10分钟自动刷新"""
     with open(QUESTIONS_FILE, "r", encoding="utf-8") as f:
         return json.load(f)
 
@@ -1196,6 +1197,9 @@ def main():
         wrong_count = len(get_wrong_ids())
         bm_count = len(st.session_state.bookmarks)
         st.caption(f"📕 错题：{wrong_count} 道  ·  ⭐ 收藏：{bm_count} 题")
+        if st.button("🔄 清除缓存", use_container_width=True):
+            st.cache_data.clear()
+            st.rerun()
 
     page_map = {
         "随机刷题": page_random_practice,
