@@ -163,14 +163,21 @@ def load_questions():
 
 def load_records():
     if os.path.exists(RECORDS_FILE):
-        with open(RECORDS_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
+        try:
+            with open(RECORDS_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except (json.JSONDecodeError, IOError):
+            return []
     return []
 
 
 def save_records(records):
-    with open(RECORDS_FILE, "w", encoding="utf-8") as f:
-        json.dump(records, f, ensure_ascii=False, indent=2)
+    try:
+        with open(RECORDS_FILE, "w", encoding="utf-8") as f:
+            json.dump(records, f, ensure_ascii=False, indent=2)
+    except IOError:
+        pass  # 写入失败不影响刷题
+
 
 
 def add_record(q_id, q_type, user_answer, correct_answer, is_correct, self_eval=False):
@@ -192,14 +199,20 @@ def add_record(q_id, q_type, user_answer, correct_answer, is_correct, self_eval=
 # ---- 收藏夹 ----
 def load_bookmarks():
     if os.path.exists(BOOKMARKS_FILE):
-        with open(BOOKMARKS_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
+        try:
+            with open(BOOKMARKS_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except (json.JSONDecodeError, IOError):
+            return []
     return []
 
 
 def save_bookmarks(bm):
-    with open(BOOKMARKS_FILE, "w", encoding="utf-8") as f:
-        json.dump(bm, f, ensure_ascii=False, indent=2)
+    try:
+        with open(BOOKMARKS_FILE, "w", encoding="utf-8") as f:
+            json.dump(bm, f, ensure_ascii=False, indent=2)
+    except IOError:
+        pass
 
 
 def toggle_bookmark(q_id):
@@ -213,14 +226,20 @@ def toggle_bookmark(q_id):
 # ---- 掌握度追踪（连续做对 2 次才从错题本移除） ----
 def load_mastery():
     if os.path.exists(MASTERY_FILE):
-        with open(MASTERY_FILE, "r", encoding="utf-8") as f:
-            return {int(k): v for k, v in json.load(f).items()}
+        try:
+            with open(MASTERY_FILE, "r", encoding="utf-8") as f:
+                return {int(k): v for k, v in json.load(f).items()}
+        except (json.JSONDecodeError, IOError, ValueError):
+            return {}
     return {}
 
 
 def save_mastery(m):
-    with open(MASTERY_FILE, "w", encoding="utf-8") as f:
-        json.dump({str(k): v for k, v in m.items()}, f, ensure_ascii=False, indent=2)
+    try:
+        with open(MASTERY_FILE, "w", encoding="utf-8") as f:
+            json.dump({str(k): v for k, v in m.items()}, f, ensure_ascii=False, indent=2)
+    except IOError:
+        pass
 
 
 def _update_mastery(q_id, is_correct):
