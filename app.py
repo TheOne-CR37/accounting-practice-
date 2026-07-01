@@ -334,6 +334,10 @@ def init_session():
         "rand_correct": None,
         "rand_self_done": False,
         "rand_need_new": True,
+        # 洗牌队列：避免短时间内刷到重复题
+        "rand_queue": [],
+        "rand_queue_pos": 0,
+        "rand_pool_hash": "",
         # --- 模拟考试 ---
         "exam_source": "全部",
         "exam_in_progress": False,
@@ -505,6 +509,7 @@ def page_random_practice():
             st.session_state.rand_types = new_types
             st.session_state.rand_key_only = new_key_only
             st.session_state.rand_need_new = True
+            st.session_state.rand_queue = []  # 筛选变了，重置队列
             st.rerun()
 
         st.divider()
@@ -519,9 +524,23 @@ def page_random_practice():
         st.warning("当前筛选条件下暂无题目，请调整筛选条件。")
         return
 
+    # 用 pool 的 id 排序指纹判断筛选条件是否变化
+    pool_hash = ",".join(str(q["id"]) for q in sorted(pool, key=lambda x: x["id"]))
+
+    # ---- 洗牌队列：轮完一圈才重复 ----
+    if (st.session_state.rand_pool_hash != pool_hash
+            or not st.session_state.rand_queue
+            or st.session_state.rand_queue_pos >= len(st.session_state.rand_queue)):
+        # 筛选条件变化 或 队列耗尽 → 重新洗牌
+        st.session_state.rand_queue = random.sample(pool, len(pool))
+        st.session_state.rand_queue_pos = 0
+        st.session_state.rand_pool_hash = pool_hash
+        st.session_state.rand_need_new = True
+
     # ---- 抽题 ----
     if st.session_state.rand_need_new:
-        q = random.choice(pool)
+        q = st.session_state.rand_queue[st.session_state.rand_queue_pos]
+        st.session_state.rand_queue_pos += 1
         st.session_state.rand_q = q
         st.session_state.rand_submitted = False
         st.session_state.rand_correct = None
